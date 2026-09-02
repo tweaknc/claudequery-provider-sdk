@@ -149,6 +149,15 @@ func (e executionClient) Logger() hclog.Logger {
 }
 
 func TestTableExecutor_Resolve(t *testing.T) {
+	// diag.WrapError stamps the error with runtime.Caller(1) -- the resolver's
+	// own symbol name and source line. Both are incidental to what this case
+	// tests: Go renders package-level closure variables as "glob..funcN" before
+	// 1.21 and "init.funcN" from 1.21 on, and the line number shifts whenever
+	// anything above the resolver moves. Derive the inner message from the
+	// resolver instead of pinning either; the assertion here is that the
+	// executor wraps that message with the table name.
+	wrappedErr := returnWrapErrorResolver(context.Background(), nil, nil, nil).Error()
+
 	testCases := []ExecutionTestCase{
 		{
 			Name: "simple",
@@ -507,10 +516,10 @@ func TestTableExecutor_Resolve(t *testing.T) {
 			ErrorExpected: true,
 			ExpectedDiags: []diag.FlatDiag{
 				{
-					Err:      `error at github.com/cloudquery/cq-provider-sdk/provider/execution.glob..func4[execution_test.go:74] some error`,
+					Err:      wrappedErr,
 					Resource: "return_wrap_error",
 					Severity: diag.ERROR,
-					Summary:  `failed to resolve table "simple": error at github.com/cloudquery/cq-provider-sdk/provider/execution.glob..func4[execution_test.go:74] some error`,
+					Summary:  fmt.Sprintf(`failed to resolve table "simple": %s`, wrappedErr),
 					Type:     diag.RESOLVING,
 				},
 			},
