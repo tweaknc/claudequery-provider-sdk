@@ -78,26 +78,43 @@ It's a parody. The moose has filed an appeal.
 
 ## The look
 
-The art is a 16-bit pass over 8-bit source data, which is the interesting part
-of this codebase.
+The art is 8-bit source data, given a 16-bit shading pass and then relit with a
+modern post-processing pipeline. That layering is the interesting part of this
+codebase.
 
-Sprites are still authored as flat character arrays — readable, editable, one
-character per pixel. `makeSprite` then shades them automatically: it reads each
-silhouette, and for every pixel decides whether it sits on the lit top edge of
-its material, the shaded underside, or the interior, picking from a three-step
-`RAMP` (light / base / dark). It also traces a hard black outline into a 1px
-pad around the sprite. So the data stays simple while the output gets a bevel
-and a proper edge — no hand-retouching of tens of thousands of pixels.
+**Sprites** are authored as flat character arrays — one character per pixel,
+readable and editable. `makeSprite` shades them on load: for every pixel it
+decides whether it sits on the lit top edge of its material, the shaded
+underside, or the interior, and picks from a three-step `RAMP` (light / base /
+dark). It also traces a hard black outline into a 1px pad that `drawSpr` backs
+out again, so call sites and hitboxes are untouched. A full bevel-and-outline
+pass over every character, with no hand-retouching.
 
-Backgrounds use ordered dithering with a 4x4 Bayer matrix, rendered once per
-theme into a cached canvas. A density check on x alone gives vertical banding,
-which is the wrong artifact entirely; the Bayer matrix keeps the pattern even
-in both axes. On top of that: three parallax layers per level with distance
-haze washing the far ones toward the sky colour, swaying grass, snow at three
-depths, contact shadows, additive particle glow, and squash-and-stretch on the
-hero with dust on a hard landing.
+**Backgrounds** use ordered dithering with a 4×4 Bayer matrix, rendered once
+per theme into a cached canvas. (Keying dither density off x alone bands the
+sky vertically — the matrix is what fixes both axes.) On top: three parallax
+layers per level with distance haze, swaying grass, snow at three depths.
 
-Frame time is a locked 16.7ms in all three levels.
+**Post-processing** is where the modern feel actually comes from, and it runs
+in three passes over the finished frame:
+
+1. **Lighting.** A light buffer is filled with a per-level coloured ambient,
+   then additive radial pools are drawn for every light source — the sun, the
+   aurora, rec-centre ceiling lamps, the golden ball, muzzle flashes, impacts,
+   the golf swing. Multiplied onto the scene. Gameplay pushes sources into
+   `lights[]` each frame and the array is cleared after each composite.
+2. **Bloom.** A quarter-size copy is multiplied by itself twice (x⁴) to crush
+   everything but genuine highlights, then added back at low alpha; the upscale
+   is the blur. A single multiply (x²) is not enough — it blooms anything pale,
+   which turns golf balls and snowflakes into orbs.
+3. **Vignette and colour grade**, per level: warm for the golf course, cold
+   blue for the north, teal for the pool.
+
+Because of that pipeline, **pure white is reserved for light sources.** Objects
+that should read as solid are painted just below it and given an outline;
+otherwise they survive the bloom threshold and glow.
+
+Frame time is a locked 16.7ms in all three levels with the full pipeline on.
 
 ## Structure
 

@@ -518,6 +518,11 @@ const TRACKS = {
 
 /* ------------------------------- helpers -------------------------------- */
 const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
+function rgba(hex, a){
+  if (hex[0] !== '#') return hex;
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + a + ')';
+}
 const rnd   = (a,b) => a + Math.random() * (b - a);
 const hit   = (a,b) => a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
 
@@ -576,9 +581,99 @@ function box(x,y,w,h,fill,border){
   if (border){ g.strokeStyle = border; g.lineWidth = 1; g.strokeRect(x+0.5,y+0.5,w-1,h-1); }
 }
 
+/* =======================================================================
+   POST-PROCESSING — the part that reads as "modern" rather than "16-bit".
+   The scene still renders as flat pixel art; these passes then relight it:
+     1. a light buffer (coloured ambient + additive light pools) multiplied on
+     2. bloom, by squaring a quarter-size copy and adding it back blurred
+     3. a vignette and a per-level colour grade
+   Gameplay pushes light sources into lights[] each frame; the array is
+   cleared after every composite.
+   ======================================================================= */
+const lightCv = document.createElement('canvas'); lightCv.width = W; lightCv.height = H;
+const lightG  = lightCv.getContext('2d');
+const BW = W >> 2, BH = H >> 2;
+const bloomCv = document.createElement('canvas'); bloomCv.width = BW; bloomCv.height = BH;
+const bloomG  = bloomCv.getContext('2d');
+let vignetteCv = null;
+const lights = [];
+function addLight(x, y, r, color, intensity){
+  if (lights.length < 48) lights.push({ x, y, r, color, i: intensity == null ? 1 : intensity });
+}
+
+const GRADE = {
+  // ambient is multiplied over the scene, so it must stay bright or everything
+  // goes muddy; the lights push it back toward white.
+  golf:  { ambient:'#c6bcec', grade:'rgba(255,190,110,0.09)', vig:0.26, bloom:0.60 },
+  air:   { ambient:'#c8ccec', grade:'rgba(255,210,140,0.07)', vig:0.20, bloom:0.55 },
+  north: { ambient:'#8a97cf', grade:'rgba(90,150,255,0.12)',  vig:0.40, bloom:0.75 },
+  pool:  { ambient:'#93a8bb', grade:'rgba(60,205,235,0.10)',  vig:0.36, bloom:0.70 }
+};
+
+function vignette(){
+  if (vignetteCv) return vignetteCv;
+  vignetteCv = document.createElement('canvas');
+  vignetteCv.width = W; vignetteCv.height = H;
+  const vg = vignetteCv.getContext('2d');
+  const rad = vg.createRadialGradient(W/2, H/2, H*0.28, W/2, H/2, H*0.78);
+  rad.addColorStop(0, 'rgba(0,0,0,0)');
+  rad.addColorStop(1, 'rgba(0,0,0,1)');
+  vg.fillStyle = rad; vg.fillRect(0, 0, W, H);
+  return vignetteCv;
+}
+
+function postProcess(theme){
+  const gr = GRADE[theme] || GRADE.golf;
+
+  // 1. lighting
+  lightG.globalCompositeOperation = 'source-over';
+  lightG.fillStyle = gr.ambient; lightG.fillRect(0, 0, W, H);
+  lightG.globalCompositeOperation = 'lighter';
+  for (const L of lights){
+    const rd = lightG.createRadialGradient(L.x, L.y, 0, L.x, L.y, L.r);
+    rd.addColorStop(0, L.color);
+    rd.addColorStop(0.45, L.color.replace(/[\d.]+\)$/, '0.35)'));
+    rd.addColorStop(1, 'rgba(0,0,0,0)');
+    lightG.globalAlpha = clamp(L.i, 0, 1);
+    lightG.fillStyle = rd;
+    lightG.fillRect(L.x - L.r, L.y - L.r, L.r * 2, L.r * 2);
+  }
+  lightG.globalAlpha = 1;
+  g.globalCompositeOperation = 'multiply';
+  g.drawImage(lightCv, 0, 0);
+
+  // 2. bloom: quarter-size copy, squared to crush the darks, added back soft
+  bloomG.globalCompositeOperation = 'source-over';
+  bloomG.imageSmoothingEnabled = true;
+  bloomG.clearRect(0, 0, BW, BH);
+  bloomG.drawImage(cv, 0, 0, BW, BH);
+  bloomG.globalCompositeOperation = 'multiply';
+  bloomG.drawImage(bloomCv, 0, 0);
+  bloomG.drawImage(bloomCv, 0, 0);
+  bloomG.globalCompositeOperation = 'source-over';
+  g.globalCompositeOperation = 'lighter';
+  g.imageSmoothingEnabled = true;                  // the upscale is the blur
+  g.globalAlpha = gr.bloom;
+  g.drawImage(bloomCv, 0, 0, W, H);
+  g.globalAlpha = 1;
+  g.imageSmoothingEnabled = false;
+
+  // 3. vignette and grade
+  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = gr.vig;
+  g.drawImage(vignette(), 0, 0);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'overlay';
+  g.fillStyle = gr.grade; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+
+  lights.length = 0;
+}
+
 /* ------------------------------ particles ------------------------------- */
 const parts = [];
 function burst(x, y, color, count, spread, life){
+  parts.push({ x, y, vx:0, vy:0, life: 14, max: 14, c: color || '#fcfcfc', flash: true });
   for (let i=0;i<(count||8);i++)
     parts.push({ x, y, vx: rnd(-1,1)*(spread||1.6), vy: rnd(-2.2,0.4),
                  life: life||26, max: life||26, c: color || '#fcfcfc' });
@@ -590,13 +685,18 @@ function updateParts(){
   for (let i=parts.length-1;i>=0;i--){
     const p = parts[i];
     p.x += p.vx; p.y += p.vy;
-    if (!p.txt) p.vy += 0.12;
+    if (!p.txt && !p.flash) p.vy += 0.12;
     if (--p.life <= 0) parts.splice(i,1);
   }
 }
 function drawParts(camX){
   for (const p of parts){
     const x = p.x - camX, a = p.life / p.max;
+    if (p.flash){                                   // light-only, draws nothing
+      addLight(x, p.y, 26 + (1-a) * 26, rgba(p.c, 0.9), a * 0.9);
+      continue;
+    }
+    if (a > 0.35) addLight(x + 1, p.y + 1, 7, rgba(p.c, 0.55), a * 0.35);
     if (p.txt){ g.globalAlpha = a < 0.4 ? a/0.4 : 1; text(p.txt, x, p.y, p.c, 'center'); g.globalAlpha = 1; }
     else {
       g.globalCompositeOperation = 'lighter';
@@ -1061,15 +1161,15 @@ function drawBackdrop(theme, camX){
   if (theme === 'golf'){
     ditherSky('golf', [[0,'#1c68d8'],[0.35,'#4c9cf0'],[0.7,'#8cd0f8'],[1,'#d8f0ff']], 0, 200);
     // sun with a soft corona
-    g.globalAlpha = 0.18; g.fillStyle = '#fff8c0';
-    g.beginPath(); g.arc(212, 34, 26, 0, 7); g.fill(); g.globalAlpha = 1;
-    g.fillStyle = '#fff8c0'; g.beginPath(); g.arc(212, 34, 15, 0, 7); g.fill();
-    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(210, 31, 9, 0, 7); g.fill();
+    g.fillStyle = '#ffe9a0'; g.beginPath(); g.arc(212, 34, 13, 0, 7); g.fill();
+    g.fillStyle = '#fffce8'; g.beginPath(); g.arc(212, 34, 9, 0, 7); g.fill();
+    addLight(212, 34, 132, 'rgba(255,238,190,1)', 0.95);
+    addLight(150, 0, 190, 'rgba(255,226,170,0.75)', 0.5);
 
     // clouds, two layers, the far one hazed
     for (let L=0; L<2; L++){
       const spd = L ? 0.22 : 0.10, sc = L ? 1 : 0.7;
-      g.fillStyle = L ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      g.fillStyle = L ? '#e6ecf8' : 'rgba(226,236,250,0.55)';
       for (let i=0;i<5;i++){
         const x = ((i*103 + L*47 - camX*spd) % (W+90) + W+90) % (W+90) - 45;
         const y = 14 + ((i*31 + L*17) % 46);
@@ -1122,6 +1222,7 @@ function drawBackdrop(theme, camX){
       g.globalAlpha = 1;
       g.fillStyle = '#f8f0c0'; g.fillRect(x, 9, 26, 5);
       g.fillStyle = '#8c9098'; g.fillRect(x+11, 0, 4, 9);
+      addLight(x + 13, 16, 104, 'rgba(255,248,205,1)', 0.85);
     }
     const sx = 150 - camX * 0.3;
     text('DELAWARE REC CENTER', sx, 74, '#7ad0e8', 'center', 10);
@@ -1135,9 +1236,11 @@ function drawBackdrop(theme, camX){
       for (let x=0;x<W;x+=2){
         const yy = 26 + i*15 + Math.sin((x + game.tick*0.7 + i*40)*0.028) * 11;
         g.fillRect(x, yy, 2, 11);
-        g.globalAlpha *= 0.999;
       }
       g.globalAlpha = 1;
+      for (let k=0;k<3;k++)
+        addLight(40 + k*88, 34 + i*14, 92,
+                 i===1 ? 'rgba(120,255,205,1)' : 'rgba(150,175,255,1)', 0.32);
     }
     // stars, two depths
     for (let i=0;i<34;i++){
@@ -1154,7 +1257,7 @@ function drawBackdrop(theme, camX){
         const x = ((i*(size*2.6) - camX*spd) % (W+180) + W+180) % (W+180) - 90;
         g.beginPath(); g.moveTo(x, base); g.lineTo(x+size/2, base-size*1.5);
         g.lineTo(x+size, base); g.closePath(); g.fill();
-        g.fillStyle = '#e8f0ff';                       // snow caught on the crown
+        g.fillStyle = '#dae6f8';                       // snow caught on the crown
         g.fillRect(x+size/2-1, base-size*1.5+2, 3, 2);
         g.fillStyle = col;
       }
@@ -1163,7 +1266,7 @@ function drawBackdrop(theme, camX){
     // snowfall, three depths
     for (let L=0; L<3; L++){
       const n = 14, spd = 0.5 + L*0.55, sz = L === 2 ? 2 : 1;
-      g.globalAlpha = 0.35 + L*0.22; g.fillStyle = '#ffffff';
+      g.globalAlpha = 0.35 + L*0.22; g.fillStyle = '#d4dff2';
       for (let i=0;i<n;i++){
         const k = i + L*17;
         const x = ((k*61 + game.tick*spd*0.5 - camX*(0.2+L*0.25)) % (W+20) + W+20) % (W+20);
@@ -1175,10 +1278,10 @@ function drawBackdrop(theme, camX){
   }
 }
 
-const LIT = { golf:'#7ae84c', north:'#ffffff', pool:'#c4f0ff' };
+const LIT = { golf:'#6fd845', north:'#e2ecfb', pool:'#a9dcee' };
 const GROUND = {   // [top, upper, body, shadow, body highlight]
   golf:  ['#3fb52c','#2f8a20','#7a4a20','#4e2a0c','#9a6438'],
-  north: ['#eef4ff','#c4d2ea','#4e5876','#2e3550','#6c7896'],
+  north: ['#e0e9fb','#b6c6e2','#4e5876','#2e3550','#6c7896'],
   pool:  ['#8cd8e8','#4c9cb0','#2c5c70','#16303e','#3f7d94']
 };
 function drawSolids(camX){
@@ -1235,10 +1338,12 @@ function drawCoins(camX){
     const x = c.x - camX; if (x < -8 || x > W+8) continue;
     const bob = Math.sin((game.tick + c.x) * 0.09) * 1.5;
     const cy = c.y + bob;
-    g.fillStyle = '#fcfcfc';
+    g.fillStyle = '#000000';
+    g.fillRect(x+1, cy-1, 4, 8); g.fillRect(x-1, cy+1, 8, 4);
+    g.fillStyle = '#c2cadb';
     g.fillRect(x+1, cy, 4, 6); g.fillRect(x, cy+1, 6, 4);
-    g.fillStyle = '#b8bcc8'; g.fillRect(x+3, cy+4, 2, 1); g.fillRect(x+4, cy+3, 1, 1);
-    g.fillStyle = '#ffffff'; g.fillRect(x+1, cy+1, 2, 1);
+    g.fillStyle = '#8a92a6'; g.fillRect(x+3, cy+4, 2, 1); g.fillRect(x+4, cy+3, 1, 1);
+    g.fillStyle = '#eef2fb'; g.fillRect(x+1, cy+1, 2, 1);
   }
 }
 
@@ -1326,6 +1431,8 @@ function drawSecretBits(camX){
       g.fillStyle = '#f8d000';
       g.fillRect(x+1, sc.y+bob, 6, 8); g.fillRect(x, sc.y+1+bob, 8, 6);
       g.fillStyle = '#fff8c0'; g.fillRect(x+2, sc.y+1+bob, 2, 2);
+      addLight(x + 4, sc.y + 4 + bob, 46 + Math.sin(game.tick*0.14) * 8,
+               'rgba(255,214,60,1)', 0.95);
       if (game.tick % 14 === 0) burst(sc.x+4, sc.y+4, '#f8d000', 2, 0.7, 26);
     }
   }
@@ -1598,6 +1705,10 @@ function drawAir(){
     g.fillRect(P.x + 13 - spin, P.y + 1, spin * 2, 2);
   }
   drawParts(0);
+  if (air.wing > 0) addLight(P.x + 14, P.y - 10, 44, 'rgba(255,225,120,1)', 0.55);
+  for (const sh of air.shots) addLight(sh.x, sh.y, 16, sh.gold ? 'rgba(255,214,60,1)' : 'rgba(220,235,255,1)', 0.4);
+  addLight(P.x + 26, P.y + 8, 34, 'rgba(180,225,255,1)', 0.35);
+  postProcess('air');
 
   // distance bar
   box(0,0,W,16,'rgba(8,8,20,0.72)');
@@ -2054,6 +2165,9 @@ function drawPlay(){
 
   drawPlayer(camX);
   drawParts(camX);
+  if (P.swing > 3 && P.swing < 14)
+    addLight(P.x - camX + P.face*14, P.y + 10, 40, 'rgba(255,255,235,1)', 0.5);
+  postProcess(world.theme);
   drawHud();
 }
 
