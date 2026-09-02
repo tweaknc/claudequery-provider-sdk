@@ -76,6 +76,29 @@ Seal of the Boss. The ending scrolls the updated atlas.
 
 It's a parody. The moose has filed an appeal.
 
+## The look
+
+The art is a 16-bit pass over 8-bit source data, which is the interesting part
+of this codebase.
+
+Sprites are still authored as flat character arrays — readable, editable, one
+character per pixel. `makeSprite` then shades them automatically: it reads each
+silhouette, and for every pixel decides whether it sits on the lit top edge of
+its material, the shaded underside, or the interior, picking from a three-step
+`RAMP` (light / base / dark). It also traces a hard black outline into a 1px
+pad around the sprite. So the data stays simple while the output gets a bevel
+and a proper edge — no hand-retouching of tens of thousands of pixels.
+
+Backgrounds use ordered dithering with a 4x4 Bayer matrix, rendered once per
+theme into a cached canvas. A density check on x alone gives vertical banding,
+which is the wrong artifact entirely; the Bayer matrix keeps the pattern even
+in both axes. On top of that: three parallax layers per level with distance
+haze washing the far ones toward the sky colour, swaying grass, snow at three
+depths, contact shadows, additive particle glow, and squash-and-stretch on the
+hero with dust on a hard landing.
+
+Frame time is a locked 16.7ms in all three levels.
+
 ## Structure
 
 `index.html` is one file in labelled sections: palette and sprite data, input,

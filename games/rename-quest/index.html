@@ -52,38 +52,76 @@ const cv = document.getElementById('c');
 const g  = cv.getContext('2d');
 g.imageSmoothingEnabled = false;
 
-/* ------------------------------ palette -------------------------------- */
+/* ------------------------------ palette --------------------------------
+   16-bit pass: every material is a three-step ramp (light / base / dark)
+   instead of one flat fill. Sprites are still authored as flat arrays --
+   makeSprite reads each silhouette and shades it, so the art data stays
+   readable while the output picks up a bevel and a hard outline.
+   ---------------------------------------------------------------------- */
+const RAMP = {
+  o:['#ffeaa8','#f8d878','#c89820'],   y:['#f0c860','#d8a028','#8c6410'],
+  s:['#ffdcb4','#fcc088','#c07840'],   S:['#e8a468','#c87840','#8c4c20'],
+  p:['#ffc0cc','#f88898','#b8505c'],
+  b:['#4e60c0','#2c3c88','#161e4c'],   B:['#2c3c88','#141c48','#080c28'],
+  r:['#f85838','#d82800','#901000'],   R:['#c83418','#8c1000','#500800'],
+  w:['#ffffff','#fcfcfc','#c0c8dc'],   W:['#e8eef8','#d0d8e8','#98a2ba'],
+  g:['#70e048','#40a828','#1c6410'],   G:['#34901f','#1c6410','#0c3808'],
+  n:['#c88a52','#a06030','#5c3010'],   N:['#8c4c24','#5c3010','#301808'],
+  c:['#a8e0ff','#68c0f8','#2470b8'],   C:['#3c88d0','#1c60a8','#0c3468'],
+  t:['#ffee90','#f8d000','#b08000'],   T:['#e0aa20','#b08000','#6c4c00'],
+  m:['#e0e4f0','#a8a8a8','#6c6c74'],   M:['#8c8c94','#585858','#303038'],
+  d:['#5c6470','#3c4048','#1c2028'],   K:['#3c3c44','#202020','#0a0a0c'],
+  e:['#ffffff','#f0f0f8','#b8bcc8'],   E:['#a06430','#7c4818','#442408'],
+  a:['#fff0c8','#e0cfa0','#a08858'],   A:['#d0b884','#b09868','#705838']
+};
 const PAL = {
   k:'#000000', K:'#202020', m:'#a8a8a8', M:'#585858', w:'#fcfcfc', W:'#d0d8e8',
-  o:'#f8d878', y:'#d8a028',                    // hair
-  s:'#fcc088', S:'#c87840', p:'#f88898',       // skin
-  b:'#2c3c88', B:'#141c48',                    // suit
-  r:'#d82800', R:'#8c1000',                    // tie / red
-  g:'#40a828', G:'#1c6410',                    // green
-  n:'#a06030', N:'#5c3010',                    // brown
-  c:'#68c0f8', C:'#1c60a8',                    // glass / blue
-  t:'#f8d000', T:'#b08000',                    // gold
-  d:'#3c4048', e:'#f0f0f8', E:'#7c4818',       // dark metal / eagle
-  a:'#e0cfa0', A:'#b09868',                    // antler bone
-  z:'#f88028'                                  // orange accent
+  o:'#f8d878', y:'#d8a028', s:'#fcc088', S:'#c87840', p:'#f88898',
+  b:'#2c3c88', B:'#141c48', r:'#d82800', R:'#8c1000',
+  g:'#40a828', G:'#1c6410', n:'#a06030', N:'#5c3010',
+  c:'#68c0f8', C:'#1c60a8', t:'#f8d000', T:'#b08000',
+  d:'#3c4048', e:'#f0f0f8', E:'#7c4818', a:'#e0cfa0', A:'#b09868'
 };
 
+// Sprites are padded 1px so the outline has somewhere to live; drawSpr backs
+// the offset out again, so every call site keeps its original coordinates.
 function makeSprite(rows){
   const h = rows.length, w = rows[0].length;
   for (const r of rows) if (r.length !== w) throw new Error('sprite row width mismatch: '+r);
-  const s = document.createElement('canvas');
-  s.width = w; s.height = h;
-  const x2 = s.getContext('2d');
+  const at = (x,y) => (y<0||y>=h||x<0||x>=w) ? '.' : rows[y][x];
+
+  const cv = document.createElement('canvas');
+  cv.width = w+2; cv.height = h+2;
+  const x2 = cv.getContext('2d');
+
+  // 1. hard black outline in the padding ring and any transparent gap
+  x2.fillStyle = '#000000';
+  for (let y=-1;y<=h;y++) for (let x=-1;x<=w;x++){
+    if (at(x,y) !== '.') continue;
+    if (at(x,y-1) !== '.' || at(x,y+1) !== '.' || at(x-1,y) !== '.' || at(x+1,y) !== '.')
+      x2.fillRect(x+1, y+1, 1, 1);
+  }
+  // 2. shade each material by where the pixel sits in its own region
   for (let y=0;y<h;y++) for (let x=0;x<w;x++){
     const ch = rows[y][x];
     if (ch === '.') continue;
-    x2.fillStyle = PAL[ch] || '#ff00ff';
-    x2.fillRect(x,y,1,1);
+    const ramp = RAMP[ch];
+    let col = PAL[ch] || '#ff00ff';
+    if (ramp){
+      if      (at(x,y-1) !== ch) col = ramp[0];   // lit top edge
+      else if (at(x,y+1) !== ch) col = ramp[2];   // shaded underside
+      else if (at(x-1,y) !== ch) col = ramp[0];   // key light from the left
+      else if (at(x+1,y) !== ch) col = ramp[2];
+      else                       col = ramp[1];
+    }
+    x2.fillStyle = col;
+    x2.fillRect(x+1, y+1, 1, 1);
   }
-  return s;
+  cv.ox = 1; cv.oy = 1;
+  return cv;
 }
 function drawSpr(s, x, y, flip){
-  x = Math.round(x); y = Math.round(y);
+  x = Math.round(x) - (s.ox || 0); y = Math.round(y) - (s.oy || 0);
   if (flip){ g.save(); g.translate(x + s.width, y); g.scale(-1,1); g.drawImage(s,0,0); g.restore(); }
   else g.drawImage(s, x, y);
 }
@@ -493,6 +531,46 @@ function text(str, x, y, color, align, size){
   g.fillText(str, x, y);
   g.textAlign = 'left';
 }
+// 16-bit skies dither between stops rather than using a smooth gradient.
+// A 4x4 Bayer matrix keeps the pattern even in both axes -- a density check
+// on x alone produces vertical banding. Rendered once per theme and cached,
+// since a per-pixel pass every frame is far too slow.
+const BAYER4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+const _skyCache = {};
+const hex2rgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+function ditherSky(key, stops, top, bottom){
+  let cvs = _skyCache[key];
+  if (!cvs){
+    cvs = document.createElement('canvas'); cvs.width = W; cvs.height = H;
+    const cx = cvs.getContext('2d');
+    const img = cx.createImageData(W, H), d = img.data;
+    const rgb = stops.map(st => [st[0], hex2rgb(st[1])]);
+    for (let y=0; y<H; y++){
+      const t = clamp((y - top) / (bottom - top), 0, 1);
+      let i = 0; while (i < rgb.length-2 && t > rgb[i+1][0]) i++;
+      const [t0,c0] = rgb[i], [t1,c1] = rgb[i+1];
+      const fr = clamp((t - t0) / ((t1 - t0) || 1), 0, 1);
+      for (let x=0; x<W; x++){
+        const c = fr > (BAYER4[((y&3)<<2) | (x&3)] + 0.5) / 16 ? c1 : c0;
+        const o = (y*W + x) * 4;
+        d[o] = c[0]; d[o+1] = c[1]; d[o+2] = c[2]; d[o+3] = 255;
+      }
+    }
+    cx.putImageData(img, 0, 0);
+    _skyCache[key] = cvs;
+  }
+  g.drawImage(cvs, 0, 0);
+}
+// Distance fog: wash a parallax layer toward the sky colour.
+function haze(color, alpha, y0, y1){
+  g.globalAlpha = alpha; g.fillStyle = color;
+  g.fillRect(0, y0, W, y1 - y0); g.globalAlpha = 1;
+}
+function bevelBox(x,y,w,h,fill,light,dark){
+  g.fillStyle = fill; g.fillRect(x,y,w,h);
+  g.fillStyle = light; g.fillRect(x,y,w,1); g.fillRect(x,y,1,h);
+  g.fillStyle = dark;  g.fillRect(x,y+h-1,w,1); g.fillRect(x+w-1,y,1,h);
+}
 function box(x,y,w,h,fill,border){
   g.fillStyle = fill; g.fillRect(x,y,w,h);
   if (border){ g.strokeStyle = border; g.lineWidth = 1; g.strokeRect(x+0.5,y+0.5,w-1,h-1); }
@@ -520,7 +598,14 @@ function drawParts(camX){
   for (const p of parts){
     const x = p.x - camX, a = p.life / p.max;
     if (p.txt){ g.globalAlpha = a < 0.4 ? a/0.4 : 1; text(p.txt, x, p.y, p.c, 'center'); g.globalAlpha = 1; }
-    else { g.globalAlpha = a; g.fillStyle = p.c; g.fillRect(Math.round(x), Math.round(p.y), 2, 2); g.globalAlpha = 1; }
+    else {
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = a * 0.30; g.fillStyle = p.c;
+      g.fillRect(Math.round(x)-2, Math.round(p.y)-2, 6, 6);
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = a; g.fillRect(Math.round(x), Math.round(p.y), 2, 2);
+      g.globalAlpha = 1;
+    }
   }
 }
 
@@ -535,7 +620,7 @@ const game = {
 };
 
 const P = { x:0, y:0, vx:0, vy:0, w:10, h:22, face:1, onGround:false,
-            coyote:0, jumpBuf:0, swing:0, inv:0, anim:0, dead:false };
+            coyote:0, jumpBuf:0, swing:0, inv:0, anim:0, dead:false, squash:0 };
 
 function say(str, frames){ game.msg = str; game.msgT = frames || 130; }
 
@@ -687,7 +772,7 @@ function updatePlatformer(){
     if (P.jumpBuf > 0) P.jumpBuf--;
     if (P.onGround) P.coyote = 7; else if (P.coyote > 0) P.coyote--;
     if (P.jumpBuf > 0 && P.coyote > 0){
-      P.vy = JUMPV; P.jumpBuf = 0; P.coyote = 0; P.onGround = false;
+      P.vy = JUMPV; P.jumpBuf = 0; P.coyote = 0; P.onGround = false; P.squash = 1;
       audio.sfx('jump'); burst(P.x+5, P.y+P.h, '#ffffff', 5, 0.9, 14);
     }
     if (P.vy < 0 && !keys.jump) P.vy *= 0.86;      // variable jump height
@@ -698,7 +783,15 @@ function updatePlatformer(){
   if (P.inv > 0) P.inv--;
 
   P.vy = Math.min(P.vy + GRAV, MAXFALL);
+  const fell = P.vy, wasAir = !P.onGround;
   movePlayer();
+  if (wasAir && P.onGround && fell > 3){          // landed hard: flatten and kick dust
+    P.squash = -Math.min(1, fell / 6);
+    burst(P.x + 5, P.y + P.h, world.theme === 'north' ? '#ffffff' : '#d8c890',
+          6, 1.5, 16);
+  }
+  P.squash *= 0.82;
+  if (Math.abs(P.squash) < 0.02) P.squash = 0;
   P.anim = Math.abs(P.vx) > 0.25 ? P.anim + Math.abs(P.vx) * 0.18 : 0;
 
   /* ---- pits / hazards ---- */
@@ -965,27 +1058,53 @@ function updateBoss(sw){
    ======================================================================== */
 function drawBackdrop(theme, camX){
   if (theme === 'golf'){
-    const sky = g.createLinearGradient(0,0,0,H);
-    sky.addColorStop(0,'#3c9cf0'); sky.addColorStop(0.65,'#8cd0f8'); sky.addColorStop(1,'#c8ecff');
-    g.fillStyle = sky; g.fillRect(0,0,W,H);
-    // sun
-    g.fillStyle = '#fff0a0'; g.beginPath(); g.arc(212, 34, 15, 0, 7); g.fill();
-    g.fillStyle = '#fcfcfc';
-    for (let i=0;i<6;i++){
-      const x = ((i*97 - camX*0.18) % (W+80) + W+80) % (W+80) - 40;
-      const y = 20 + (i%3)*22;
-      g.fillRect(x, y, 26, 6); g.fillRect(x+6, y-4, 16, 6);
+    ditherSky('golf', [[0,'#1c68d8'],[0.35,'#4c9cf0'],[0.7,'#8cd0f8'],[1,'#d8f0ff']], 0, 200);
+    // sun with a soft corona
+    g.globalAlpha = 0.18; g.fillStyle = '#fff8c0';
+    g.beginPath(); g.arc(212, 34, 26, 0, 7); g.fill(); g.globalAlpha = 1;
+    g.fillStyle = '#fff8c0'; g.beginPath(); g.arc(212, 34, 15, 0, 7); g.fill();
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(210, 31, 9, 0, 7); g.fill();
+
+    // clouds, two layers, the far one hazed
+    for (let L=0; L<2; L++){
+      const spd = L ? 0.22 : 0.10, sc = L ? 1 : 0.7;
+      g.fillStyle = L ? '#ffffff' : 'rgba(255,255,255,0.55)';
+      for (let i=0;i<5;i++){
+        const x = ((i*103 + L*47 - camX*spd) % (W+90) + W+90) % (W+90) - 45;
+        const y = 14 + ((i*31 + L*17) % 46);
+        g.fillRect(x, y, 30*sc, 6*sc); g.fillRect(x+6*sc, y-4*sc, 18*sc, 6*sc);
+        g.fillRect(x+2*sc, y+5*sc, 24*sc, 3*sc);
+      }
     }
-    // distant fairway hills
+    // far ridge
+    g.fillStyle = '#2a6a3c';
+    for (let i=0;i<9;i++){
+      const x = ((i*150 - camX*0.16) % (W+300) + W+300) % (W+300) - 150;
+      g.beginPath(); g.arc(x, 196, 74, Math.PI, 0); g.fill();
+    }
+    haze('#8cd0f8', 0.45, 120, 200);
+    // mid hills
     g.fillStyle = '#2b7a1f';
     for (let i=0;i<9;i++){
       const x = ((i*140 - camX*0.35) % (W+280) + W+280) % (W+280) - 140;
-      g.beginPath(); g.arc(x, 190, 66, Math.PI, 0); g.fill();
+      g.beginPath(); g.arc(x, 192, 66, Math.PI, 0); g.fill();
     }
-    g.fillStyle = '#34901f';
+    haze('#8cd0f8', 0.18, 130, 200);
+    // near hills, lit along the top
     for (let i=0;i<9;i++){
       const x = ((i*110 - camX*0.55) % (W+220) + W+220) % (W+220) - 110;
+      g.fillStyle = '#34901f';
       g.beginPath(); g.arc(x, 202, 52, Math.PI, 0); g.fill();
+      g.fillStyle = '#4fb62c';
+      g.beginPath(); g.arc(x, 200, 52, Math.PI*1.08, Math.PI*1.55); g.fill();
+    }
+    // grass tufts swaying at the treeline
+    for (let i=0;i<26;i++){
+      const x = ((i*37 - camX*0.72) % (W+40) + W+40) % (W+40) - 20;
+      const sway = Math.sin(game.tick*0.045 + i) * 1.4;
+      g.fillStyle = '#2f8a20';
+      g.fillRect(x, 176, 1, 6); g.fillRect(x+sway, 172, 1, 5);
+      g.fillRect(x+2, 177, 1, 5); g.fillRect(x+2+sway*0.6, 174, 1, 4);
     }
   } else if (theme === 'pool'){
     g.fillStyle = '#0e2430'; g.fillRect(0,0,W,H);
@@ -1007,70 +1126,91 @@ function drawBackdrop(theme, camX){
     text('DELAWARE REC CENTER', sx, 74, '#7ad0e8', 'center', 10);
     text('POOL RULES: NO CHAINS, NO BAD DUDES', sx, 88, '#3f8798', 'center', 7);
   } else {
-    const sky = g.createLinearGradient(0,0,0,H);
-    sky.addColorStop(0,'#0c1240'); sky.addColorStop(0.55,'#1e3070'); sky.addColorStop(1,'#5a7cb8');
-    g.fillStyle = sky; g.fillRect(0,0,W,H);
-    // aurora
+    ditherSky('north', [[0,'#080c30'],[0.4,'#1a2c68'],[0.75,'#3a58a0'],[1,'#7c9cd0']], 0, 200);
+    // aurora, three ribbons
     for (let i=0;i<3;i++){
-      g.globalAlpha = 0.18 + i*0.05;
-      g.fillStyle = i===1 ? '#68f8c0' : '#8ca8f8';
-      for (let x=0;x<W;x+=4){
-        const yy = 30 + i*13 + Math.sin((x + game.tick*0.7 + i*40)*0.03) * 9;
-        g.fillRect(x, yy, 4, 9);
+      g.globalAlpha = 0.16 + i*0.05;
+      g.fillStyle = i===1 ? '#68f8c0' : i===2 ? '#a888f8' : '#8ca8f8';
+      for (let x=0;x<W;x+=2){
+        const yy = 26 + i*15 + Math.sin((x + game.tick*0.7 + i*40)*0.028) * 11;
+        g.fillRect(x, yy, 2, 11);
+        g.globalAlpha *= 0.999;
       }
       g.globalAlpha = 1;
     }
-    // stars
-    g.fillStyle = '#fcfcfc';
-    for (let i=0;i<24;i++){
-      const x = ((i*53 - camX*0.06) % W + W) % W;
-      g.fillRect(x, (i*37) % 70, 1, 1);
+    // stars, two depths
+    for (let i=0;i<34;i++){
+      const x = ((i*53 - camX*0.05) % W + W) % W;
+      const tw = (game.tick + i*29) % 120 < 60 ? '#fcfcfc' : '#a8b4d8';
+      g.fillStyle = i%4 ? '#8c9ac0' : tw;
+      g.fillRect(x, (i*37) % 78, 1, 1);
     }
-    // pine ridge
-    for (let layer=0; layer<2; layer++){
-      const spd = layer ? 0.5 : 0.25, base = layer ? 200 : 188;
-      g.fillStyle = layer ? '#14401e' : '#0d2a16';
-      for (let i=0;i<14;i++){
-        const x = ((i*84 - camX*spd) % (W+170) + W+170) % (W+170) - 85;
-        const s = layer ? 30 : 24;
-        g.beginPath();
-        g.moveTo(x, base); g.lineTo(x+s/2, base-s*1.5); g.lineTo(x+s, base);
-        g.closePath(); g.fill();
+    // three pine layers, far ones fogged into the sky
+    const PINES = [[0.14,182,20,'#0a1f14'],[0.32,192,26,'#0d2a16'],[0.55,202,32,'#14401e']];
+    PINES.forEach(([spd, base, size, col], li) => {
+      g.fillStyle = col;
+      for (let i=0;i<16;i++){
+        const x = ((i*(size*2.6) - camX*spd) % (W+180) + W+180) % (W+180) - 90;
+        g.beginPath(); g.moveTo(x, base); g.lineTo(x+size/2, base-size*1.5);
+        g.lineTo(x+size, base); g.closePath(); g.fill();
+        g.fillStyle = '#e8f0ff';                       // snow caught on the crown
+        g.fillRect(x+size/2-1, base-size*1.5+2, 3, 2);
+        g.fillStyle = col;
       }
-    }
-    // snowfall
-    g.fillStyle = '#ffffff';
-    for (let i=0;i<40;i++){
-      const x = ((i*61 + game.tick*0.5*(1+(i%3)*0.4) - camX*0.4) % (W+20) + W+20) % (W+20);
-      const y = ((i*47 + game.tick*(0.7+(i%4)*0.25)) % (H+10));
-      g.globalAlpha = 0.55; g.fillRect(x, y, 1, 1); g.globalAlpha = 1;
+      if (li < 2) haze('#3a58a0', li ? 0.16 : 0.34, base-size*1.6, 200);
+    });
+    // snowfall, three depths
+    for (let L=0; L<3; L++){
+      const n = 14, spd = 0.5 + L*0.55, sz = L === 2 ? 2 : 1;
+      g.globalAlpha = 0.35 + L*0.22; g.fillStyle = '#ffffff';
+      for (let i=0;i<n;i++){
+        const k = i + L*17;
+        const x = ((k*61 + game.tick*spd*0.5 - camX*(0.2+L*0.25)) % (W+20) + W+20) % (W+20);
+        const y = ((k*47 + game.tick*spd) % (H+10));
+        g.fillRect(x, y, sz, sz);
+      }
+      g.globalAlpha = 1;
     }
   }
 }
 
-const GROUND = {
-  golf:  ['#3fb52c','#2f8a20','#7a4a20','#5c3410'],
-  north: ['#e8f0ff','#b8c8e0','#5a6478','#454e60'],
-  pool:  ['#8cd8e8','#4c9cb0','#2c5c70','#1c3c4c']
+const LIT = { golf:'#7ae84c', north:'#ffffff', pool:'#c4f0ff' };
+const GROUND = {   // [top, upper, body, shadow, body highlight]
+  golf:  ['#3fb52c','#2f8a20','#7a4a20','#4e2a0c','#9a6438'],
+  north: ['#eef4ff','#c4d2ea','#4e5876','#2e3550','#6c7896'],
+  pool:  ['#8cd8e8','#4c9cb0','#2c5c70','#16303e','#3f7d94']
 };
 function drawSolids(camX){
-  const [c0,c1,c2,c3] = GROUND[world.theme] || GROUND.golf;
+  const [c0,c1,c2,c3,c4] = GROUND[world.theme] || GROUND.golf;
   for (const s of world.solids){
     const x = s.x - camX;
     if (x > W || x + s.w < 0) continue;
     if (s.h > 20){                                   // ground slab
-      g.fillStyle = c0; g.fillRect(x, s.y, s.w, 6);
-      g.fillStyle = c1; g.fillRect(x, s.y+6, s.w, 6);
+      g.fillStyle = c0; g.fillRect(x, s.y+1, s.w, 5);
+      g.fillStyle = LIT[world.theme] || '#6ee048'; g.fillRect(x, s.y, s.w, 1);
+      g.fillStyle = c1; g.fillRect(x, s.y+6, s.w, 5);
+      g.fillStyle = c3; g.fillRect(x, s.y+11, s.w, 1);      // contact shadow
       g.fillStyle = c2; g.fillRect(x, s.y+12, s.w, s.h-12);
       g.fillStyle = c3;
-      for (let i=0;i<s.w;i+=16) g.fillRect(x+i+3, s.y+18, 6, 3);
+      for (let i=0;i<s.w;i+=16){
+        g.fillRect(x+i+3, s.y+18, 7, 3); g.fillRect(x+i+11, s.y+26, 4, 2);
+        g.fillRect(x+i+6, s.y+33, 5, 2);
+      }
+      g.fillStyle = c4;
+      for (let i=0;i<s.w;i+=16){ g.fillRect(x+i+3, s.y+17, 7, 1); g.fillRect(x+i+11, s.y+25, 4, 1); }
+      g.fillStyle = 'rgba(0,0,0,0.25)';                      // edge falloff
+      g.fillRect(x, s.y+12, 2, s.h-12); g.fillRect(x+s.w-2, s.y+12, 2, s.h-12);
     } else if (s.h > 40 || s.w < 16){                // arena wall
       g.fillStyle = '#5a6478'; g.fillRect(x, s.y, s.w, s.h);
       g.fillStyle = '#8c98b0'; g.fillRect(x, s.y, s.w, 2);
     } else {                                          // floating platform
-      g.fillStyle = c0; g.fillRect(x, s.y, s.w, 4);
-      g.fillStyle = c2; g.fillRect(x, s.y+4, s.w, s.h-4);
-      g.fillStyle = '#000'; g.fillRect(x, s.y+s.h-1, s.w, 1);
+      g.fillStyle = '#000'; g.fillRect(x-1, s.y-1, s.w+2, s.h+2);
+      g.fillStyle = c0; g.fillRect(x, s.y+1, s.w, 3);
+      g.fillStyle = LIT[world.theme] || '#6ee048'; g.fillRect(x, s.y, s.w, 1);
+      g.fillStyle = c2; g.fillRect(x, s.y+4, s.w, s.h-5);
+      g.fillStyle = c3; g.fillRect(x, s.y+s.h-1, s.w, 1);
+      g.fillStyle = 'rgba(255,255,255,0.16)'; g.fillRect(x, s.y+4, 1, s.h-5);
+      g.fillStyle = 'rgba(0,0,0,0.30)';       g.fillRect(x+s.w-1, s.y+4, 1, s.h-5);
     }
   }
   for (const hz of world.hazards){
@@ -1218,7 +1358,19 @@ function drawPlayer(camX){
   let frame = HERO.idle;
   if (!P.onGround) frame = HERO.jump;
   else if (Math.abs(P.vx) > 0.25) frame = ((P.anim | 0) % 2) ? HERO.walk1 : HERO.walk2;
-  drawSpr(frame, x, y, P.face < 0);
+
+  // soft contact shadow on the ground below
+  if (P.onGround){
+    g.globalAlpha = 0.28; g.fillStyle = '#000000';
+    g.fillRect(Math.round(x)+2, Math.round(y)+23, 12, 2); g.globalAlpha = 1;
+  }
+  const q = P.squash;
+  if (q){
+    const cx = Math.round(x) + 8, fy = Math.round(y) + 24;
+    g.save(); g.translate(cx, fy); g.scale(1 - q*0.16, 1 + q*0.20); g.translate(-cx, -fy);
+    drawSpr(frame, x, y, P.face < 0);
+    g.restore();
+  } else drawSpr(frame, x, y, P.face < 0);
 
   if (P.swing > 0){                                  // golf club arc
     const prog = 1 - P.swing / 18;
@@ -1233,7 +1385,12 @@ function drawPlayer(camX){
 }
 
 function drawHud(){
-  box(0, 0, W, 16, 'rgba(8,8,20,0.72)');
+  const grad = g.createLinearGradient(0,0,0,16);
+  grad.addColorStop(0,'rgba(20,24,54,0.94)'); grad.addColorStop(1,'rgba(6,8,20,0.80)');
+  g.fillStyle = grad; g.fillRect(0,0,W,16);
+  g.fillStyle = '#4c5c9c'; g.fillRect(0,15,W,1);
+  g.fillStyle = '#8ca0e0'; g.fillRect(0,16,W,1);
+  g.globalAlpha = 0.35; g.fillStyle = '#000'; g.fillRect(0,17,W,2); g.globalAlpha = 1;
   for (let i=0;i<3;i++){
     const on = i < game.hearts, x = 5 + i*11;
     g.fillStyle = on ? '#d82800' : '#40404a';
@@ -1371,9 +1528,7 @@ function updateAir(){
 }
 
 function drawAir(){
-  const sky = g.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0,'#1c3c9c'); sky.addColorStop(0.5,'#5ca0f0'); sky.addColorStop(1,'#bce4ff');
-  g.fillStyle = sky; g.fillRect(0,0,W,H);
+  ditherSky('air', [[0,'#12309c'],[0.4,'#3c78e0'],[0.75,'#7cbcf8'],[1,'#cceaff']], 0, H-22);
 
   const sc = air.dist;
   // far clouds
@@ -1385,6 +1540,8 @@ function drawAir(){
   }
   // ground far below
   g.fillStyle = '#2f7a24'; g.fillRect(0, H-22, W, 22);
+  g.fillStyle = '#4fb62c'; g.fillRect(0, H-22, W, 2);
+  g.fillStyle = '#1c5416'; g.fillRect(0, H-6, W, 6);
   g.fillStyle = '#245f1c';
   for (let i=0;i<12;i++){
     const x = ((i*47 - sc*0.9) % (W+50) + W+50) % (W+50) - 25;
@@ -1863,10 +2020,12 @@ function drawPlay(){
     const bx = b.x - camX;
     g.save();
     if (b.hurt > 0 && (game.tick>>1)%2) g.globalAlpha = 0.55;
-    if (b.dead){ g.translate(bx + 26, b.y + 20); g.rotate(b.t * 0.06); g.translate(-26, -20);
-                 g.drawImage(MOOSE, 0, 0, 52, 40); }
-    else if (b.face > 0){ g.translate(bx + 52, b.y); g.scale(-1,1); g.drawImage(MOOSE, 0, 0, 52, 40); }
-    else g.drawImage(MOOSE, bx, b.y, 52, 40);
+    const MW = MOOSE.width * 2, MH = MOOSE.height * 2;   // 2x, padding included
+    const mx = bx - 4, my = b.y + b.h - MH + 2;
+    if (b.dead){ g.translate(mx + MW/2, my + MH/2); g.rotate(b.t * 0.06);
+                 g.translate(-MW/2, -MH/2); g.drawImage(MOOSE, 0, 0, MW, MH); }
+    else if (b.face > 0){ g.translate(mx + MW, my); g.scale(-1,1); g.drawImage(MOOSE, 0, 0, MW, MH); }
+    else g.drawImage(MOOSE, mx, my, MW, MH);
     g.restore(); g.globalAlpha = 1;
     if (!b.dead){
       box(60, 20, 136, 9, '#101828', '#fcfcfc');
