@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>RENAME QUEST — An 8-Bit Parody</title>
+<title>The Quest to Rename Wonders and Waterways of the World</title>
 <style>
   :root { color-scheme: dark; }
   html,body{margin:0;padding:0;background:#0b0b12;color:#cfd2e0;
@@ -122,6 +122,60 @@ const LEGS = {
 const HERO = {};
 for (const key in LEGS) HERO[key] = makeSprite(TORSO.concat(LEGS[key]));
 const HERO_W = 16, HERO_H = 24;
+
+// The secret level's opposition: same 16x20 rig, white hair, aviators, blue tie.
+const BIDEN_TORSO = [
+"................",
+".....wwwwww.....",
+"...wwwwwwwwww...",
+"..wWWWWWWWWWWw..",
+"..wssssssssWWw..",
+"..wsssssssssssw.",
+"..wkkkkkkkkkkw..",
+"..wsssssssssssw.",
+"...wssssssssS...",
+"...wsssKKKssS...",
+"....ssssssss....",
+".....SssssS.....",
+"...wwwwccwwww...",
+"..BBwwwccwwwBB..",
+".BBBBwwccwwBBBB.",
+".BBBBBwccwBBBBB.",
+".BBBBBwccwBBBBB.",
+".sBBBBBccBBBBBs.",
+".sBBBBBKKBBBBBs.",
+"..BBBBB..BBBBB.."
+];
+const BIDEN = {};
+for (const key in LEGS) BIDEN[key] = makeSprite(BIDEN_TORSO.concat(LEGS[key]));
+
+// Corn Pop, 16x24. Headband, shades, entirely too cool for this cage.
+const CORNPOP = makeSprite([
+"................",
+"...NNNNNNNNNN...",
+"..NNNNNNNNNNNN..",
+"..NNNNNNNNNNNN..",
+"..RRRRRRRRRRRR..",
+"..NSSSSSSSSSSN..",
+"..NkkkkkkkkkkN..",
+"..NSSSSSSSSSSN..",
+"...SSSSSSSSS....",
+"...SSSwwwSSS....",
+"....SSSSSSSS....",
+".....SSSSSS.....",
+"...wwwwwwwwww...",
+"..SwwwwwwwwwwS..",
+".SSwwwwwwwwwwSS.",
+".SSwwwwwwwwwwSS.",
+"..wwwwwwwwwwww..",
+"..CCCCCCCCCCCC..",
+"..CCCCC..CCCCC..",
+"..CCCCC..CCCCC..",
+"..CCCC....CCCC..",
+"..CCCC....CCCC..",
+"..wwww....wwww..",
+"..kkkk....kkkk.."
+]);
 
 // Marine One-ish chopper, 28x16, nose to the right.
 const CHOPPER = makeSprite([
@@ -416,6 +470,9 @@ const TRACKS = {
   north: { ms:145, gate:0.12, drum:true,
     lead:[N(74),N(77),N(81),N(77),N(75),N(79),N(82),N(79),N(74),N(77),N(81),N(86),N(84),N(81),N(77),0],
     bass:[N(50),N(50),N(57),N(50),N(51),N(51),N(58),N(51)] },
+  secret:{ ms:118, gate:0.10, drum:true,
+    lead:[N(64),N(67),N(71),N(74),N(71),N(67),N(64),N(67),N(62),N(65),N(69),N(72),N(69),N(65),N(62),0],
+    bass:[N(40),N(40),N(47),N(40),N(38),N(38),N(45),N(38)] },
   hail:  { ms:170, gate:0.16, drum:false,
     lead:[N(72),N(72),N(79),N(79),N(81),N(81),N(79),0,N(77),N(77),N(76),N(76),N(74),N(74),N(72),0],
     bass:[N(48),0,N(55),0,N(53),0,N(55),0] }
@@ -473,7 +530,8 @@ function drawParts(camX){
 const game = {
   state:'title', paused:false, tick:0, levelIndex:0,
   hearts:3, score:0, flash:0, shake:0, msg:null, msgT:0,
-  renames:{}, renameIdx:0, banner:'', bannerT:0
+  renames:{}, renameIdx:0, banner:'', bannerT:0,
+  secretDone:false, decrees:null, stash:null, goLine:0
 };
 
 const P = { x:0, y:0, vx:0, vy:0, w:10, h:22, face:1, onGround:false,
@@ -496,6 +554,8 @@ function buildLevel(idx){
   world.solids = []; world.hazards = []; world.coins = [];
   world.enemies = []; world.shots = []; world.fx = [];
   world.boss = null; world.done = false;
+  world.biden = null; world.cage = null; world.cornpop = null;
+  world.secret = null; world.sign = null;
   parts.length = 0;
 
   if (idx === 0){
@@ -516,6 +576,10 @@ function buildLevel(idx){
     for (let x=880; x<1340; x+=44) addBall(x, 160);
     for (let x=1470; x<1950; x+=44) addBall(x, 160);
     for (let x=2090; x<2520; x+=44) addBall(x, 160);
+    if (!game.secretDone){
+      world.secret = { x:2392, y:60, w:8, h:8, taken:false };   // atop the 2374 platform
+      world.sign   = { x:2160 };                                // "what's up there?"
+    }
     [[420,380,540],[980,900,1180],[1240,1180,1360],
      [1560,1470,1700],[1860,1800,1970],
      [2200,2110,2350],[2520,2440,2700],[2820,2760,2920]
@@ -656,6 +720,8 @@ function updatePlatformer(){
     }
   }
 
+  if (world.secret && !world.secret.taken && hit(P, world.secret)){ warpToSecret(); return; }
+
   const sw = swingBox();
 
   /* ---- enemies ---- */
@@ -674,8 +740,9 @@ function updatePlatformer(){
     if (s.x < -20 || s.x > world.len + 20 || s.y > H + 40) world.shots.splice(i,1);
   }
 
-  /* ---- boss ---- */
+  /* ---- bosses ---- */
   if (world.boss) updateBoss(sw);
+  if (world.biden) updateBiden(sw);
 
   /* ---- goal ---- */
   if (!world.done && !world.boss && P.x + P.w > world.goal){ clearLevel(); }
@@ -752,6 +819,101 @@ function updateEnemy(e, sw){
   if (hit(P, box)) hurtPlayer(Math.sign(P.x - e.x) || -1);
 }
 
+/* ======================================================================
+   SECRET LEVEL — THE CORN POP CAPER
+   Reached from Hole 1 by climbing the three-platform stack near the end
+   and grabbing the golden ball. Beat the Big Guy, spring Corn Pop, come
+   back out onto the same fairway with a bonus decree in your pocket.
+   ====================================================================== */
+const SECRET = 3;
+
+function buildSecret(){
+  world.solids = []; world.hazards = []; world.coins = [];
+  world.enemies = []; world.shots = []; world.done = false;
+  world.boss = null; world.secret = null; world.sign = null;
+  world.theme = 'pool'; world.len = 512; world.goal = 99999;
+  parts.length = 0;
+  world.solids.push(ground(0, 512));
+  [[80,132],[196,106],[312,132]].forEach(p => world.solids.push({ x:p[0], y:p[1], w:56, h:10 }));
+  world.solids.push({ x:500, y:60, w:12, h:124 });
+  world.biden   = { x:300, y:152, w:16, h:24, vx:-1.6, hp:5, hurt:0, t:0,
+                    face:-1, dead:false, state:'ride', cast:0, done:0 };
+  world.cage    = { x:436, y:150, w:34, h:34, open:false };
+  world.cornpop = { x:444, y:160, free:false, t:0, face:-1 };
+  P.w = 10; P.h = 22; P.x = 24; P.y = 150;
+  P.vx = P.vy = 0; P.face = 1; P.swing = 0; P.inv = 90; P.dead = false; P.onGround = false;
+  game.hearts = 3;
+}
+
+function warpToSecret(){
+  game.stash = { w: Object.assign({}, world), x:P.x, y:P.y, idx:game.levelIndex };
+  audio.sfx('eagle'); game.flash = 12;
+  buildSecret();
+  game.levelIndex = SECRET;
+  game.state = 'intro';
+  audio.music(null);
+}
+function clearSecret(){ game.state = 'secretclear'; audio.music(null); audio.sfx('clear'); }
+function returnFromSecret(){
+  const st = game.stash;
+  Object.assign(world, st.w);          // buildSecret handed out fresh arrays, so these survived
+  world.secret.taken = true;
+  game.secretDone = true;
+  game.levelIndex = st.idx;
+  P.w = 10; P.h = 22; P.x = st.x; P.y = st.y - 4;
+  P.vx = P.vy = 0; P.inv = 90; P.swing = 0;
+  game.hearts = 3;
+  game.state = 'play';
+  audio.music(LEVELS[game.levelIndex].music);
+  say('BACK ON THE COURSE. CORN POP SENDS HIS REGARDS.', 150);
+}
+
+function updateBiden(sw){
+  const b = world.biden, c = world.cornpop;
+  b.t++;
+  if (b.hurt > 0) b.hurt--;
+
+  if (b.dead){
+    if (b.done++ === 0){
+      world.cage.open = true; c.free = true;
+      game.score += 5000;
+      popText(b.x + 8, b.y - 10, 'CORN POP IS FREE!', '#40e058');
+      say('THE CAGE IS OPEN. CORN POP WALKS.', 200);
+      audio.sfx('eagle');
+    }
+    if (b.done % 10 === 0) burst(b.x + 8, b.y + 18, '#68c0f8', 3, 1.2);
+    if (b.done > 190) clearSecret();
+  } else if (b.state === 'ride'){
+    b.x += b.vx;
+    if (b.x < 8 || b.x + b.w > world.len - 40) b.vx *= -1;
+    b.face = b.vx < 0 ? -1 : 1;
+    if (b.t % 120 === 0){ b.state = 'toss'; b.cast = 0; }
+  } else {
+    b.cast++;
+    b.face = Math.sign(P.x - b.x) || b.face;
+    if (b.cast === 18 || b.cast === 36){
+      world.shots.push({ x:b.x + 6, y:b.y + 6, w:6, h:6, kind:'scoop',
+                         vx:(Math.sign(P.x - b.x) || 1) * 2.1, vy:-2.6, grav:0.16 });
+      audio.sfx('swing');
+    }
+    if (b.cast > 54) b.state = 'ride';
+  }
+
+  if (!b.dead){
+    const box2 = { x:b.x, y:b.y, w:b.w, h:b.h };
+    if (sw && hit(sw, box2) && b.hurt === 0){
+      b.hp--; b.hurt = 45; game.shake = 8;
+      audio.sfx('bonk'); burst(b.x + 8, b.y + 12, '#68c0f8', 14, 2.4);
+      P.vx = -P.face * 3;
+      if (b.hp <= 0){ b.dead = true; b.done = 0; }
+      else popText(b.x + 8, b.y - 10, b.hp + ' LEFT', '#fcfcfc');
+    } else if (hit(P, box2) && b.hurt === 0){
+      hurtPlayer(Math.sign(P.x - b.x) || -1);
+    }
+  }
+  if (c.free){ c.t++; if (c.x > P.x + 26){ c.x -= 0.8; c.face = -1; } }
+}
+
 /* --------------------------------- boss ---------------------------------- */
 function updateBoss(sw){
   const b = world.boss;
@@ -825,6 +987,25 @@ function drawBackdrop(theme, camX){
       const x = ((i*110 - camX*0.55) % (W+220) + W+220) % (W+220) - 110;
       g.beginPath(); g.arc(x, 202, 52, Math.PI, 0); g.fill();
     }
+  } else if (theme === 'pool'){
+    g.fillStyle = '#0e2430'; g.fillRect(0,0,W,H);
+    const off = (camX * 0.3) % 16;
+    for (let ty=0; ty<184; ty+=16) for (let tx=-16; tx<W+16; tx+=16){
+      g.fillStyle = (((tx+ty)/16)|0) % 2 ? '#164450' : '#123742';
+      g.fillRect(tx - off, ty, 15, 15);
+    }
+    for (let i=0;i<6;i++){
+      const x = ((i*74 - camX*0.3) % (W+74) + W+74) % (W+74) - 37;
+      g.globalAlpha = 0.10; g.fillStyle = '#ffffff';
+      g.beginPath(); g.moveTo(x, 14); g.lineTo(x+26, 14);
+      g.lineTo(x+44, 184); g.lineTo(x-18, 184); g.closePath(); g.fill();
+      g.globalAlpha = 1;
+      g.fillStyle = '#f8f0c0'; g.fillRect(x, 9, 26, 5);
+      g.fillStyle = '#8c9098'; g.fillRect(x+11, 0, 4, 9);
+    }
+    const sx = 150 - camX * 0.3;
+    text('DELAWARE REC CENTER', sx, 74, '#7ad0e8', 'center', 10);
+    text('POOL RULES: NO CHAINS, NO BAD DUDES', sx, 88, '#3f8798', 'center', 7);
   } else {
     const sky = g.createLinearGradient(0,0,0,H);
     sky.addColorStop(0,'#0c1240'); sky.addColorStop(0.55,'#1e3070'); sky.addColorStop(1,'#5a7cb8');
@@ -867,23 +1048,28 @@ function drawBackdrop(theme, camX){
   }
 }
 
+const GROUND = {
+  golf:  ['#3fb52c','#2f8a20','#7a4a20','#5c3410'],
+  north: ['#e8f0ff','#b8c8e0','#5a6478','#454e60'],
+  pool:  ['#8cd8e8','#4c9cb0','#2c5c70','#1c3c4c']
+};
 function drawSolids(camX){
-  const snow = world.theme === 'north';
+  const [c0,c1,c2,c3] = GROUND[world.theme] || GROUND.golf;
   for (const s of world.solids){
     const x = s.x - camX;
     if (x > W || x + s.w < 0) continue;
     if (s.h > 20){                                   // ground slab
-      g.fillStyle = snow ? '#e8f0ff' : '#3fb52c'; g.fillRect(x, s.y, s.w, 6);
-      g.fillStyle = snow ? '#b8c8e0' : '#2f8a20'; g.fillRect(x, s.y+6, s.w, 6);
-      g.fillStyle = snow ? '#5a6478' : '#7a4a20'; g.fillRect(x, s.y+12, s.w, s.h-12);
-      g.fillStyle = snow ? '#454e60' : '#5c3410';
+      g.fillStyle = c0; g.fillRect(x, s.y, s.w, 6);
+      g.fillStyle = c1; g.fillRect(x, s.y+6, s.w, 6);
+      g.fillStyle = c2; g.fillRect(x, s.y+12, s.w, s.h-12);
+      g.fillStyle = c3;
       for (let i=0;i<s.w;i+=16) g.fillRect(x+i+3, s.y+18, 6, 3);
     } else if (s.h > 40 || s.w < 16){                // arena wall
       g.fillStyle = '#5a6478'; g.fillRect(x, s.y, s.w, s.h);
       g.fillStyle = '#8c98b0'; g.fillRect(x, s.y, s.w, 2);
     } else {                                          // floating platform
-      g.fillStyle = snow ? '#e8f0ff' : '#3fb52c'; g.fillRect(x, s.y, s.w, 4);
-      g.fillStyle = snow ? '#8c9ab8' : '#7a4a20'; g.fillRect(x, s.y+4, s.w, s.h-4);
+      g.fillStyle = c0; g.fillRect(x, s.y, s.w, 4);
+      g.fillStyle = c2; g.fillRect(x, s.y+4, s.w, s.h-4);
       g.fillStyle = '#000'; g.fillRect(x, s.y+s.h-1, s.w, 1);
     }
   }
@@ -916,6 +1102,7 @@ function drawCoins(camX){
 }
 
 function drawGoal(camX){
+  if (world.goal > world.len) return;
   const x = world.goal - camX;
   if (x < -30 || x > W+30) return;
   const base = 184;
@@ -955,6 +1142,73 @@ function drawEnemy(e, camX){
   } else if (e.type === 'moose'){
     const bob = Math.sin(e.anim) * 1.2;
     drawSpr(MOOSE, x, e.y + bob, e.face > 0);
+  }
+}
+
+function drawBike(x, y){
+  g.strokeStyle = '#c8ccd8'; g.lineWidth = 1;
+  g.beginPath(); g.arc(x+5.5, y+6.5, 5, 0, 7); g.stroke();
+  g.beginPath(); g.arc(x+17.5, y+6.5, 5, 0, 7); g.stroke();
+  g.fillStyle = '#2c3c88'; g.fillRect(x+5, y+1, 13, 2); g.fillRect(x+10, y+2, 2, 5);
+  g.fillStyle = '#202028'; g.fillRect(x+3, y, 6, 2);
+  g.fillStyle = '#c8ccd8'; g.fillRect(x+16, y-3, 2, 5); g.fillRect(x+14, y-3, 6, 2);
+}
+
+function drawSecretBits(camX){
+  if (world.sign){
+    const x = world.sign.x - camX;
+    if (x > -24 && x < W+24){
+      g.fillStyle = '#7a4a20'; g.fillRect(x+6, 162, 2, 22);
+      box(x, 148, 15, 15, '#f8ecc0', '#7a4a20');
+      text('?', x+7, 151, '#a01808', 'center', 10);
+      if ((game.tick>>4)%2){
+        g.fillStyle = '#f8d000';
+        g.fillRect(x+5, 138, 4, 6); g.fillRect(x+3, 140, 8, 2); g.fillRect(x+4, 139, 6, 1);
+      }
+    }
+  }
+  const sc = world.secret;
+  if (sc && !sc.taken){
+    const x = sc.x - camX;
+    if (x > -24 && x < W+24){
+      const bob = Math.sin(game.tick * 0.1) * 2;
+      g.globalAlpha = 0.22 + Math.sin(game.tick * 0.14) * 0.12;
+      g.fillStyle = '#f8d000';
+      g.beginPath(); g.arc(x+4, sc.y+4+bob, 11, 0, 7); g.fill();
+      g.globalAlpha = 1;
+      g.fillStyle = '#f8d000';
+      g.fillRect(x+1, sc.y+bob, 6, 8); g.fillRect(x, sc.y+1+bob, 8, 6);
+      g.fillStyle = '#fff8c0'; g.fillRect(x+2, sc.y+1+bob, 2, 2);
+      if (game.tick % 14 === 0) burst(sc.x+4, sc.y+4, '#f8d000', 2, 0.7, 26);
+    }
+  }
+}
+
+function drawSecretCast(camX){
+  const cg = world.cage, c = world.cornpop, b = world.biden;
+  const cx = cg.x - camX;
+  g.fillStyle = '#3c4048'; g.fillRect(cx-3, cg.y-5, cg.w+6, 5);
+  g.fillStyle = '#585c68'; g.fillRect(cx-3, cg.y+cg.h, cg.w+6, 4);
+  g.fillStyle = '#8c98b0';
+  if (cg.open){ g.fillRect(cx-3, cg.y, 3, cg.h); g.fillRect(cx+cg.w, cg.y, 3, cg.h); }
+  else for (let i=0;i<=cg.w;i+=6) g.fillRect(cx+i, cg.y, 2, cg.h);
+
+  drawSpr(CORNPOP, c.x - camX, c.y, c.face > 0);
+  if (c.free && c.t > 40 && (game.tick>>4)%2)
+    text('THANKS, PAL.', c.x - camX + 8, c.y - 12, '#40e058', 'center', 7);
+
+  const bx = b.x - camX;
+  if (!(b.hurt > 0 && (game.tick>>1)%2)){
+    drawBike(bx - 3, b.y + 20);
+    let fr = BIDEN.idle;
+    if (b.dead) fr = BIDEN.duck;
+    else if (b.state === 'ride') fr = ((b.t/6|0)%2) ? BIDEN.walk1 : BIDEN.walk2;
+    drawSpr(fr, bx, b.y, b.face > 0);
+  }
+  if (!b.dead){
+    box(60, 20, 136, 9, '#101828', '#fcfcfc');
+    g.fillStyle = '#68c0f8'; g.fillRect(62, 22, Math.round(132 * b.hp / 5), 5);
+    text('THE BIG GUY', 128, 32, '#fcfcfc', 'center', 7);
   }
 }
 
@@ -1203,32 +1457,59 @@ function drawAir(){
 const LEVELS = [
   { tag:'HOLE 1/3', kind:'platform', music:'golf', name:'SAND TRAP SUMMIT',
     blurb:['A CHARITY SCRAMBLE ON THE BACK NINE.','GEESE HAVE OCCUPIED THE FAIRWAY.',
-           'COLLECT THE BALLS. PLANT THE FLAG.'] },
+           'COLLECT THE BALLS, PLANT THE FLAG,',
+           'AND LOOK UP HIGH NEAR THE LAST GREEN.'] },
   { tag:'HOLE 2/3', kind:'air',      music:'chopper', name:'CHOPPER ONE',
     blurb:['WHEELS UP. HEADING NORTH.','BUREAUCRACY BLIMPS AND STORM FRONTS AHEAD.',
            'GRAB AN EAGLE ESCORT AND HOLD THE STICK.'] },
   { tag:'HOLE 3/3', kind:'platform', music:'north',   name:'THE 51ST HOLE',
     blurb:['SNOW. SYRUP. VERY POLITE OPPOSITION.','A MOOSE THE SIZE OF A CONDO GUARDS THE GREEN.',
-           'SIX GOOD SWINGS SHOULD DO IT.'] }
+           'SIX GOOD SWINGS SHOULD DO IT.'] },
+  { tag:'? ? ?',   kind:'platform', music:'secret',  name:'THE CORN POP CAPER',
+    blurb:['A WARP, UNDER THE DELAWARE REC CENTER.','CORN POP IS IN A CAGE.',
+           'THE BIG GUY IS DOING LAPS WITH THE KEY.','FIVE GOOD SWINGS. NO CHAINS REQUIRED.'] }
 ];
+const HOLES = 3;              // LEVELS[3] is the secret; it is never reached in sequence
 
 /* ========================================================================
    THE RENAMING CEREMONY
    ======================================================================== */
 const PLACES = [
-  { id:'greatlakes', real:'THE GREAT LAKES',
+  { g:'WATERWAYS & LANDMARKS', real:'THE GREAT LAKES', id:'greatlakes',
     opts:['THE GREAT AMERICAN LAKES','LAKE TRUMPERIOR','THE FIVE GULFS OF AMERICA'] },
-  { id:'hormuz', real:'THE STRAIT OF HORMUZ',
+  { g:'WATERWAYS & LANDMARKS', real:'THE STRAIT OF HORMUZ', id:'hormuz',
     opts:['THE STRAIT OF TRUMP','THE BIG BEAUTIFUL STRAIT','STRAIT OF WINNING'] },
-  { id:'panama', real:'THE PANAMA CANAL',
+  { g:'WATERWAYS & LANDMARKS', real:'THE PANAMA CANAL', id:'panama',
     opts:['THE TRUMP CANAL','CANAL NUMBER ONE','THE BIG BEAUTIFUL DITCH'] },
-  { id:'thames', real:'THE RIVER THAMES',
+  { g:'WATERWAYS & LANDMARKS', real:'THE RIVER THAMES', id:'thames',
     opts:['THE RIVER TRUMP','THE THAMES OF AMERICA','TREMENDOUS CREEK'] },
-  { id:'everest', real:'MOUNT EVEREST',
+  { g:'WATERWAYS & LANDMARKS', real:'MOUNT EVEREST', id:'everest',
     opts:['MOUNT TRUMP','THE BIG TALL ONE','PEAK AMERICA'] },
-  { id:'pacific', real:'THE PACIFIC OCEAN',
-    opts:['THE TRUMPACIFIC','THE BIG BLUE ONE','OCEAN OF WINNING'] }
+  { g:'WATERWAYS & LANDMARKS', real:'THE PACIFIC OCEAN', id:'pacific',
+    opts:['THE TRUMPACIFIC','THE BIG BLUE ONE','OCEAN OF WINNING'] },
+
+  { g:'WONDERS OF THE WORLD', real:'THE GREAT PYRAMID OF GIZA', id:'giza',
+    opts:['THE TRUMP PYRAMID','THE BIG BEAUTIFUL TRIANGLE','PYRAMID NUMBER ONE'] },
+  { g:'WONDERS OF THE WORLD', real:'THE EIFFEL TOWER', id:'eiffel',
+    note:'NOT TECHNICALLY A WONDER. IT IS NOW.',
+    opts:['TRUMP TOWER PARIS','LA TOUR TRUMP','THE BIG BEAUTIFUL ANTENNA'] },
+  { g:'WONDERS OF THE WORLD', real:'THE LOUVRE', id:'louvre',
+    note:'IT HAS A PYRAMID. CLOSE ENOUGH.',
+    opts:['MAR-A-LOUVRE','THE TRUMP GALLERY','THE BIG BEAUTIFUL MUSEUM'] },
+  { g:'WONDERS OF THE WORLD', real:'THE GREAT WALL OF CHINA', id:'wall',
+    opts:['THE TRUMP WALL','THE ORIGINAL BIG BEAUTIFUL WALL','WALL NUMBER TWO'] },
+  { g:'WONDERS OF THE WORLD', real:'THE COLOSSEUM', id:'colosseum',
+    opts:['TRUMP ARENA ROME','THE BIG BEAUTIFUL STADIUM','THE ROUND ONE'] },
+  { g:'WONDERS OF THE WORLD', real:'MACHU PICCHU', id:'machu',
+    opts:['MACHU TRUMP','THE HIGH BEAUTIFUL ONE','PEAK PERU BY TRUMP'] },
+  { g:'WONDERS OF THE WORLD', real:'THE TAJ MAHAL', id:'taj',
+    opts:['THE TAJ TRUMP','THE BIG BEAUTIFUL DOME','MARBLE NUMBER ONE'] },
+
+  { g:'SECRET BONUS DECREE', real:'THE DELAWARE MEMORIAL BRIDGE', id:'delaware',
+    secret:true, note:'AWARDED FOR SPRINGING CORN POP.',
+    opts:['THE CORN POP CROSSING','CORN POP MEMORIAL BRIDGE','THE BAD DUDE BRIDGE'] }
 ];
+function activeDecrees(){ return PLACES.filter(p => !p.secret || game.secretDone); }
 const rename = { idx:0, sel:0, stamp:0, scroll:0 };
 
 function handleTyping(e){
@@ -1246,9 +1527,9 @@ function handleTyping(e){
   return true;
 }
 function commitRename(name){
-  const pl = PLACES[rename.idx];
+  const pl = game.decrees[rename.idx];
   game.renames[pl.id] = name;
-  rename.stamp = 70;
+  rename.stamp = 58;
   game.score += 1000;
   audio.sfx('stamp'); game.shake = 8;
   burst(128, 150, '#f8d000', 22, 3, 40);
@@ -1260,7 +1541,7 @@ function updateRename(){
   if (rename.stamp > 0){
     if (--rename.stamp === 0){
       rename.idx++; rename.sel = 0;
-      if (rename.idx >= PLACES.length){
+      if (rename.idx >= game.decrees.length){
         game.state = 'ending'; rename.scroll = 0; audio.music('hail');
       }
     }
@@ -1273,7 +1554,7 @@ function updateRename(){
   if (tap('right')){ rename.sel = (rename.sel + 1) % max; audio.sfx('menu'); }
   if (tap('start') || tap('act')){
     if (rename.sel === 3) { typingBuffer = ''; audio.sfx('menu'); }
-    else commitRename(PLACES[rename.idx].opts[rename.sel]);
+    else commitRename(game.decrees[rename.idx].opts[rename.sel]);
   }
 }
 
@@ -1302,12 +1583,14 @@ function drawRename(){
   // parchment
   box(10, 10, W-20, H-20, '#efe0b8', '#8c6a30');
   box(12, 12, W-24, H-24, '#f7ecd0', '#c8a860');
-  g.fillStyle = '#c8a860'; g.fillRect(16, 30, W-32, 1);
+  g.fillStyle = '#c8a860'; g.fillRect(16, 36, W-32, 1);
 
-  const pl = PLACES[rename.idx];
-  text('PRESIDENTIAL DECREE No. ' + (rename.idx + 1), 128, 18, '#7a5200', 'center', 9);
-  text('THE BODY OF WATER / LANDMARK', 128, 38, '#8c7040', 'center', 7);
-  text('FORMERLY KNOWN AS', 128, 47, '#8c7040', 'center', 7);
+  const pl = game.decrees[rename.idx];
+  const inGroup = game.decrees.filter(d => d.g === pl.g);
+  text('PRESIDENTIAL DECREE No. ' + (rename.idx + 1), 128, 16, '#7a5200', 'center', 9);
+  text(pl.g + '  ' + (inGroup.indexOf(pl) + 1) + ' OF ' + inGroup.length,
+       128, 26, pl.secret ? '#a01808' : '#a08040', 'center', 7);
+  text('THE PLACE FORMERLY KNOWN AS', 128, 42, '#8c7040', 'center', 7);
   text(pl.real, 128, 60, '#a01808', 'center', 10);
   g.fillStyle = '#a01808'; g.fillRect(30, 72, W-60, 1);
   text('SHALL HENCEFORTH BE CALLED:', 128, 80, '#8c7040', 'center', 7);
@@ -1326,11 +1609,12 @@ function drawRename(){
       text((on ? '> ' : '  ') + label, 128, y, on ? '#3c2400' : '#5c4828', 'center', 8);
     }
     text('UP/DOWN CHOOSE  -  ENTER SIGNS IT', 128, 160, '#8c7040', 'center', 7);
+    if (pl.note) text(pl.note, 128, 172, '#a08040', 'center', 7);
   }
 
   // already-signed tally
   const done = Object.keys(game.renames).length;
-  text('SIGNED: ' + done + ' / ' + PLACES.length, 20, 196, '#8c7040', 'left', 7);
+  text('SIGNED: ' + done + ' / ' + game.decrees.length, 20, 196, '#8c7040', 'left', 7);
   text('BONUS +1000 PER SIGNATURE', W-20, 196, '#8c7040', 'right', 7);
 
   if (rename.stamp > 0){
@@ -1360,12 +1644,16 @@ function drawEnding(){
   }
   drawParts(0);
 
-  const top = 14 - (rename.scroll % 300);
+  const list = game.decrees || PLACES;
+  const span = 96 + list.length * 22;
+  const top = 14 - (rename.scroll % span);
   g.save(); g.translate(0, top);
   text('THE ATLAS HAS BEEN UPDATED', 128, 0, '#f8d000', 'center', 11);
   text('OFFICIAL NEW NAMES OF THE WORLD', 128, 16, '#68c0f8', 'center', 7);
   let y = 32;
-  for (const pl of PLACES){
+  let lastG = null;
+  for (const pl of list){
+    if (pl.g !== lastG){ lastG = pl.g; text('- ' + pl.g + ' -', 128, y - 2, '#f8d000', 'center', 7); y += 12; }
     text(pl.real, 128, y, '#7c86b8', 'center', 7);
     text('IS NOW  ' + (game.renames[pl.id] || '(UNSIGNED)'), 128, y + 9, '#fcfcfc', 'center', 8);
     y += 22;
@@ -1373,6 +1661,7 @@ function drawEnding(){
   text('FINAL SCORE  ' + String(game.score).padStart(6,'0'), 128, y + 6, '#f8d000', 'center', 10);
   text('CARTOGRAPHERS EVERYWHERE ARE FURIOUS.', 128, y + 22, '#68c0f8', 'center', 7);
   text('THE MOOSE HAS FILED AN APPEAL.', 128, y + 31, '#68c0f8', 'center', 7);
+  if (game.secretDone) text('CORN POP: FREE, AND STILL A BAD DUDE.', 128, y + 40, '#40e058', 'center', 7);
   g.restore();
 
   box(0, H-20, W, 20, 'rgba(8,8,20,0.85)');
@@ -1392,7 +1681,7 @@ function drawTitle(){
   for (let i=0;i<3;i++){
     const a = game.tick*0.012 + i*2.1;
     drawSpr((game.tick>>3)%2 ? EAGLE_UP : EAGLE_DN,
-            128 + Math.cos(a)*92 - 8, 62 + Math.sin(a)*24, Math.cos(a) < 0);
+            128 + Math.cos(a)*104 - 8, 106 + Math.sin(a)*14, Math.cos(a) < 0);
   }
   // ground + hero
   g.fillStyle = '#2f8a20'; g.fillRect(0, 176, W, 48);
@@ -1401,12 +1690,13 @@ function drawTitle(){
   drawSpr(MOOSE, 200, 158, true);
   drawSpr(GOOSE, 34, 164, false);
 
-  text('RENAME', 128, 24, '#f8d000', 'center', 34);
-  text('QUEST', 128, 56, '#fcfcfc', 'center', 30);
-  text('AN 8-BIT PARODY IN THREE HOLES', 128, 92, '#68c0f8', 'center', 8);
-  text('GOLF • CHOPPERS • EAGLES • MOOSE', 128, 104, '#f89828', 'center', 8);
+  text('THE QUEST TO RENAME', 128, 14, '#fcfcfc', 'center', 14);
+  text('WONDERS & WATERWAYS', 128, 30, '#f8d000', 'center', 18);
+  text('OF THE WORLD', 128, 54, '#fcfcfc', 'center', 14);
+  text('AN 8-BIT PARODY IN THREE HOLES', 128, 76, '#68c0f8', 'center', 8);
+  text('GOLF - CHOPPERS - EAGLES - MOOSE', 128, 88, '#f89828', 'center', 8);
 
-  if ((game.tick>>4)%2) text('PRESS ENTER TO TEE OFF', 128, 126, '#fcfcfc', 'center', 10);
+  if ((game.tick>>4)%2) text('PRESS ENTER TO TEE OFF', 128, 128, '#fcfcfc', 'center', 10);
   text('ARROWS MOVE  •  SPACE JUMP  •  X SWING/FIRE', 128, 208, '#c8d0f0', 'center', 7);
   text('M MUTE', 6, 6, '#8c98c8', 'left', 7);
 }
@@ -1418,8 +1708,9 @@ function drawIntro(){
   text(L.tag, 128, 52, '#68c0f8', 'center', 9);
   text(L.name, 128, 68, '#f8d000', 'center', 15);
   g.fillStyle = '#3c4c88'; g.fillRect(30, 90, W-60, 1);
-  L.blurb.forEach((line, i) => text(line, 128, 100 + i*13, '#dfe4f8', 'center', 8));
-  text('REWARD: ONE (1) NAMING RIGHT', 128, 146, '#f89828', 'center', 8);
+  L.blurb.forEach((line, i) => text(line, 128, 98 + i*12, '#dfe4f8', 'center', 8));
+  text(game.levelIndex === SECRET ? 'REWARD: ONE (1) BONUS DECREE'
+                                  : 'REWARD: ONE (1) NAMING RIGHT', 128, 150, '#f89828', 'center', 8);
   if ((game.tick>>4)%2) text('PRESS ENTER', 128, 184, '#fcfcfc', 'center', 10);
   drawSpr(HERO.idle, 20, 176, false);
   drawSpr(CHOPPER, 200, 180, false);
@@ -1443,6 +1734,24 @@ function drawLevelClear(){
        128, 144, '#a8b4e0', 'center', 7);
   if ((game.tick>>4)%2) text('PRESS ENTER', 128, 178, '#fcfcfc', 'center', 10);
   drawSpr(HERO.idle, 118, 176, false);
+}
+
+function drawSecretClear(){
+  g.fillStyle = '#06180e'; g.fillRect(0,0,W,H);
+  for (let i=0;i<30;i++){
+    const x = (i*97 + game.tick) % W, y = (i*61 + game.tick*2) % H;
+    g.fillStyle = ['#40e058','#f8d000','#68c0f8'][i%3]; g.fillRect(x, y, 2, 2);
+  }
+  box(16, 40, W-32, 130, '#0c2c1a', '#40e058');
+  text('SECRET CLEARED', 128, 50, '#40e058', 'center', 16);
+  text('CORN POP IS FREE', 128, 74, '#fcfcfc', 'center', 12);
+  text('HE MAINTAINS HE WAS NEVER IN ANY TROUBLE', 128, 96, '#a8e0c0', 'center', 7);
+  text('BUT APPRECIATES THE GESTURE.', 128, 106, '#a8e0c0', 'center', 7);
+  text('+5000  AND ONE BONUS DECREE', 128, 124, '#f8d000', 'center', 9);
+  text('SCORE  ' + String(game.score).padStart(6,'0'), 128, 142, '#68c0f8', 'center', 9);
+  if ((game.tick>>4)%2) text('PRESS ENTER', 128, 156, '#fcfcfc', 'center', 9);
+  drawSpr(CORNPOP, 96, 176, false);
+  drawSpr(HERO.idle, 146, 176, true);
 }
 
 function drawGameOver(){
@@ -1480,6 +1789,7 @@ function beginPlay(){
 }
 function newGame(){
   game.score = 0; game.renames = {};
+  game.secretDone = false; game.decrees = null; game.stash = null;
   rename.idx = 0; rename.sel = 0; rename.stamp = 0; rename.scroll = 0;
   typingBuffer = null;
   startLevel(0);
@@ -1506,13 +1816,17 @@ function update(){
       break;
     case 'levelclear':
       if (tap('start') || tap('jump') || tap('act')){
-        if (game.levelIndex + 1 < LEVELS.length) startLevel(game.levelIndex + 1);
-        else { game.state = 'rename'; rename.idx = 0; rename.sel = 0; audio.music('hail'); }
+        if (game.levelIndex + 1 < HOLES) startLevel(game.levelIndex + 1);
+        else { game.state = 'rename'; rename.idx = 0; rename.sel = 0;
+               game.decrees = activeDecrees(); audio.music('hail'); }
       }
       break;
     case 'gameover':
       if (tap('back')){ game.state = 'title'; audio.music(null); }
       else if (tap('start') || tap('jump') || tap('act')) startLevel(game.levelIndex);
+      break;
+    case 'secretclear':
+      if (tap('start') || tap('jump') || tap('act')) returnFromSecret();
       break;
     case 'rename': updateRename(); break;
     case 'ending': updateEnding(); break;
@@ -1526,12 +1840,21 @@ function drawPlay(){
   drawSolids(camX);
   drawCoins(camX);
   drawGoal(camX);
+  drawSecretBits(camX);
   for (const e of world.enemies) drawEnemy(e, camX);
+  if (world.biden) drawSecretCast(camX);
 
-  // pucks
+  // pucks and ice cream
   for (const s of world.shots){
-    g.fillStyle = s.friendly ? '#f8d000' : '#101010';
-    g.fillRect(Math.round(s.x - camX), Math.round(s.y), s.w, s.h);
+    const sx = Math.round(s.x - camX), sy = Math.round(s.y);
+    if (s.kind === 'scoop'){
+      g.fillStyle = '#e8a860'; g.fillRect(sx+1, sy+3, 4, 4);      // cone
+      g.fillStyle = s.friendly ? '#f8d000' : '#f8b8d0';
+      g.fillRect(sx+1, sy, 4, 4); g.fillRect(sx, sy+1, 6, 2);
+    } else {
+      g.fillStyle = s.friendly ? '#f8d000' : '#101010';
+      g.fillRect(sx, sy, s.w, s.h);
+    }
   }
 
   // boss
@@ -1567,6 +1890,7 @@ function render(){
     case 'play':       drawPlay(); break;
     case 'levelclear': drawLevelClear(); break;
     case 'gameover':   drawGameOver(); break;
+    case 'secretclear': drawSecretClear(); break;
     case 'rename':     drawRename(); break;
     case 'ending':     drawEnding(); break;
   }
